@@ -292,6 +292,40 @@ function Status() {
             </div>
           </div>
 
+          {/* Testing Section */}
+          <div class="mt-8">
+            <h2 class="text-2xl font-bold text-center mb-6">🧪 Testing</h2>
+            <div class="card w-full bg-base-200 shadow-sm">
+              <div class="card-body">
+                <h3 class="card-title">Test Pause Function</h3>
+                <p class="text-sm mb-4">
+                  Test the pause functionality without manually stopping filament. Uses the same pause verification and retry logic as the actual filament sensor.
+                </p>
+                
+                {testPauseError() && (
+                  <div role="alert" class="mb-4 alert alert-error">
+                    {testPauseError()}
+                  </div>
+                )}
+                
+                <button
+                  class="btn btn-warning"
+                  onClick={handleTestPause}
+                  disabled={testPauseLoading()}
+                >
+                  {testPauseLoading() ? (
+                    <>
+                      <span class="loading loading-spinner loading-sm"></span>
+                      Sending Test Pause...
+                    </>
+                  ) : (
+                    'Test Pause Function'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
         </div>
       )}
     </div>
