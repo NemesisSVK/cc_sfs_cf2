@@ -126,6 +126,13 @@ class ElegooCC
     String        pendingAckRequestId;
     unsigned long ackWaitStartTime;
 
+    // Pause verification tracking
+    bool          pauseCommandSent;
+    unsigned long pauseCommandSentTime;
+    int           pauseRetryCount;
+    static const int MAX_PAUSE_RETRIES = 3;
+    static const unsigned long PAUSE_VERIFICATION_TIMEOUT_MS = 15000;
+
     ElegooCC();
 
     // Delete copy constructor and assignment operator
@@ -147,6 +154,9 @@ class ElegooCC
     bool shouldPausePrint(unsigned long currentTime);
     void checkFilamentMovement(unsigned long currentTime);
     void checkFilamentRunout(unsigned long currentTime);
+    void checkPauseVerification(unsigned long currentTime);
+    void resetPauseState();
+    bool isPauseInProgress();
 
    public:
     // Singleton access method

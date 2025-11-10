@@ -39,6 +39,10 @@ ElegooCC::ElegooCC()
     pendingAckRequestId = "";
     ackWaitStartTime    = 0;
 
+    pauseCommandSent     = false;
+    pauseCommandSentTime = 0;
+    pauseRetryCount      = 0;
+
     // TODO: send a UDP broadcast, M99999 on Port 30000, maybe using AsyncUDP.h and listen for the
     // result. this will give us the printer IP address.
 
@@ -67,6 +71,8 @@ void ElegooCC::webSocketEvent(WStype_t type, uint8_t *payload, size_t length)
             pendingAckCommand   = -1;
             pendingAckRequestId = "";
             ackWaitStartTime    = 0;
+            // Reset pause verification state on disconnect
+            resetPauseState();
             break;
         case WStype_CONNECTED:
             logger.log("Connected to Carbon Centauri");
@@ -187,10 +193,21 @@ void ElegooCC::handleStatus(JsonDocument &doc)
     {
         JsonObject          printInfo = status["PrintInfo"];
         sdcp_print_status_t newStatus = printInfo["Status"].as<sdcp_print_status_t>();
-        if (newStatus != printStatus && newStatus == SDCP_PRINT_STATUS_PRINTING)
+        if (newStatus != printStatus)
         {
-            logger.log("Print status changed to printing");
-            startedAt = millis();
+            if (newStatus == SDCP_PRINT_STATUS_PRINTING)
+            {
+                logger.log("Print status changed to printing");
+                startedAt = millis();
+                // Reset pause state when print starts/resumes
+                resetPauseState();
+            }
+            else if (newStatus == SDCP_PRINT_STATUS_PAUSED)
+            {
+                logger.log("Print status changed to paused");
+                // Reset pause state when successfully paused
+                resetPauseState();
+            }
         }
         printStatus   = newStatus;
         currentLayer  = printInfo["CurrentLayer"];
@@ -212,6 +229,10 @@ void ElegooCC::handleStatus(JsonDocument &doc)
 void ElegooCC::pausePrint()
 {
     sendCommand(SDCP_COMMAND_PAUSE_PRINT, true);
+    // Set pause verification state
+    pauseCommandSent = true;
+    pauseCommandSentTime = millis();
+    logger.logf("Pause command sent, retry count: %d", pauseRetryCount);
 }
 
 void ElegooCC::continuePrint()
@@ -317,6 +338,9 @@ void ElegooCC::loop()
     checkFilamentMovement(currentTime);
     checkFilamentRunout(currentTime);
 
+    // Check pause verification and retry if needed
+    checkPauseVerification(currentTime);
+
     // Check if we should pause the print
     if (shouldPausePrint(currentTime))
     {
@@ -394,10 +418,11 @@ bool ElegooCC::shouldPausePrint(unsigned long currentTime)
     // Don't pause if the websocket is not connected (we can't pause anyway if we're not connected)
     // Don't pause if we're waiting for an ack
     // Don't pause if we have less than 100t tickets left, the print is probably done
+    // Don't pause if we're already in pause verification mode
     // TODO: also add a buffer after pause because sometimes an ack comes before the update
     if (currentTime - startedAt < settingsManager.getStartPrintTimeout() ||
         !webSocket.isConnected() || waitingForAck || !isPrinting() ||
-        (totalTicks - currentTicks) < 100 || !pauseCondition)
+        (totalTicks - currentTicks) < 100 || !pauseCondition || isPauseInProgress())
     {
         return false;
     }
@@ -459,4 +484,55 @@ printer_info_t ElegooCC::getCurrentInformation()
     info.waitingForAck        = waitingForAck;
 
     return info;
+}
+
+void ElegooCC::checkPauseVerification(unsigned long currentTime)
+{
+    if (!pauseCommandSent)
+    {
+        return; // No pause command pending verification
+    }
+
+    // Check if printer has successfully paused
+    if (printStatus == SDCP_PRINT_STATUS_PAUSED || printStatus == SDCP_PRINT_STATUS_PAUSING)
+    {
+        logger.logf("Pause verification successful - printer status: %d", printStatus);
+        resetPauseState();
+        return;
+    }
+
+    // Check if pause verification has timed out
+    if (currentTime - pauseCommandSentTime >= PAUSE_VERIFICATION_TIMEOUT_MS)
+    {
+        logger.logf("Pause verification timeout - printer still in status: %d", printStatus);
+        
+        if (pauseRetryCount < MAX_PAUSE_RETRIES)
+        {
+            pauseRetryCount++;
+            logger.logf("Retrying pause command (attempt %d/%d)", pauseRetryCount, MAX_PAUSE_RETRIES);
+            
+            // Reset pause command state to allow retry
+            pauseCommandSent = false;
+            
+            // The next loop iteration will trigger shouldPausePrint again if conditions are still met
+        }
+        else
+        {
+            logger.logf("Max pause retries (%d) exceeded, giving up", MAX_PAUSE_RETRIES);
+            resetPauseState();
+        }
+    }
+}
+
+void ElegooCC::resetPauseState()
+{
+    pauseCommandSent = false;
+    pauseCommandSentTime = 0;
+    pauseRetryCount = 0;
+    logger.log("Pause verification state reset");
+}
+
+bool ElegooCC::isPauseInProgress()
+{
+    return pauseCommandSent;
 }

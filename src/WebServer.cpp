@@ -102,8 +102,36 @@ void WebServer::begin()
                   request->send(200, "application/json", jsonResponse);
               });
 
-    // Serve static files from SPIFFS
-    server.serveStatic("/assets/", SPIFFS, "/assets/");
+    // Serve static files from SPIFFS with proper cache headers
+    server.serveStatic("/assets/", SPIFFS, "/assets/").setDefaultFile("index.htm")
+          .setCacheControl("max-age=31536000"); // Cache assets for 1 year
+    
+    // SPA fallback - serve index.htm for all unmatched routes
+    server.onNotFound([](AsyncWebServerRequest *request) {
+        // Check if it's an API endpoint
+        String path = request->url();
+        if (path.startsWith("/get_") || path.startsWith("/update_") || 
+            path.startsWith("/sensor_") || path.startsWith("/logs") || 
+            path.startsWith("/version")) {
+            request->send(404, "text/plain", "Not Found");
+            return;
+        }
+        
+        // For all other routes, serve the SPA index file
+        if (SPIFFS.exists("/index.htm.gz")) {
+            AsyncWebServerResponse *response = request->beginResponse(SPIFFS, "/index.htm.gz", "text/html");
+            response->addHeader("Content-Encoding", "gzip");
+            response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            request->send(response);
+        } else if (SPIFFS.exists("/index.htm")) {
+            AsyncWebServerResponse *response = request->beginResponse(SPIFFS, "/index.htm", "text/html");
+            response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            request->send(response);
+        } else {
+            request->send(404, "text/plain", "WebUI not found - please build and upload");
+        }
+    });
+    
     server.serveStatic("/", SPIFFS, "/");
 }
 
