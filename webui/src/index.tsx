@@ -18,7 +18,7 @@ render(() => (
     <Route path="/status" component={Status} />
     <Route path="/settings" component={Settings} />
     <Route path="/logs" component={Logs} />
-    <Route path="/storage" component={SystemHealth} />
+    <Route path="/syshealth" component={SystemHealth} />
     <Route path="/update" component={Update} />
     <Route path="/about" component={About} />
   </Router>

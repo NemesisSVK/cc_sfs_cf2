@@ -142,7 +142,6 @@ class ElegooCC
     void handleCommandResponse(JsonDocument &doc);
     void handleStatus(JsonDocument &doc);
     void sendCommand(int command, bool waitForAck = false);
-    void pausePrint();
     void continuePrint();
 
     // Helper methods for machine status bitmask
@@ -162,6 +161,9 @@ class ElegooCC
 
     void setup();
     void loop();
+
+    // Print control methods
+    void pausePrint();
 
     // Get current printer information
     printer_info_t getCurrentInformation();

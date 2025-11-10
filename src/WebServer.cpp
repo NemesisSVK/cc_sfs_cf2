@@ -370,6 +370,15 @@ void WebServer::begin()
                   ESP.restart();
               });
 
+    // Test pause endpoint
+    server.on("/test_pause", HTTP_POST,
+              [this](AsyncWebServerRequest *request)
+              {
+                  logger.log("Test pause requested via WebUI");
+                  elegooCC.pausePrint();
+                  request->send(200, "text/plain", "Test pause command sent");
+              });
+
     // Timeseries data endpoints
     server.on("/api/timeseries/movement", HTTP_GET,
               [](AsyncWebServerRequest *request)

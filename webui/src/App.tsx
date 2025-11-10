@@ -29,7 +29,7 @@ function App(props: ParentProps) {
           Logs
         </A>
 
-        <A href="/storage" class={`tab ${isActive('/storage') ? 'tab-active' : ''}`}>
+        <A href="/syshealth" class={`tab ${isActive('/syshealth') ? 'tab-active' : ''}`}>
           Sys Health
         </A>
 

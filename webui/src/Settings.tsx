@@ -103,6 +103,7 @@ function Settings() {
     }
   }
 
+
   return (
     <div class="card" >
 
@@ -257,6 +258,22 @@ function Settings() {
           </fieldset>
 
           <h2 class="text-lg font-bold mb-4 mt-10">Pause Verification Settings</h2>
+          
+          <div role="alert" class="mb-6 alert alert-info alert-soft">
+            <div>
+              <h3 class="font-bold">Why Pause Verification?</h3>
+              <p class="mt-2">The original firmware had a critical issue: it would only pause on the <strong>first</strong> filament runout detection. If the printer didn't actually pause (due to network issues, timing problems, or printer being busy), subsequent filament runouts would be ignored.</p>
+              <p class="mt-2">This enhanced firmware adds <strong>pause verification</strong> - after sending a pause command, it monitors the printer's status to confirm it actually paused. If the printer doesn't pause within the timeout period, it will automatically retry up to the configured number of times.</p>
+              <p class="mt-2"><strong>How it works:</strong></p>
+              <ul class="list-disc list-inside mt-1 ml-4">
+                <li>Send pause command to printer</li>
+                <li>Monitor printer status for "PAUSED" or "PAUSING" state</li>
+                <li>If timeout expires without successful pause, retry the command</li>
+                <li>Continue until max retries reached or pause confirmed</li>
+              </ul>
+              <p class="mt-2">This ensures reliable filament runout handling on every occurrence, not just the first one.</p>
+            </div>
+          </div>
 
           <fieldset class="fieldset">
             <legend class="fieldset-legend">Pause Verification Timeout</legend>
