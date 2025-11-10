@@ -102,6 +102,17 @@ void WebServer::begin()
                   request->send(200, "application/json", jsonResponse);
               });
 
+    // Restart endpoint
+    server.on("/restart", HTTP_POST,
+              [](AsyncWebServerRequest *request)
+              {
+                  logger.log("Restart requested via WebUI");
+                  request->send(200, "text/plain", "Restarting device...");
+                  // Delay restart to allow response to be sent
+                  delay(1000);
+                  ESP.restart();
+              });
+
     // Serve static files from SPIFFS with proper cache headers
     server.serveStatic("/assets/", SPIFFS, "/assets/").setDefaultFile("index.htm")
           .setCacheControl("max-age=31536000"); // Cache assets for 1 year
@@ -112,7 +123,7 @@ void WebServer::begin()
         String path = request->url();
         if (path.startsWith("/get_") || path.startsWith("/update_") || 
             path.startsWith("/sensor_") || path.startsWith("/logs") || 
-            path.startsWith("/version")) {
+            path.startsWith("/version") || path.startsWith("/restart")) {
             request->send(404, "text/plain", "Not Found");
             return;
         }
