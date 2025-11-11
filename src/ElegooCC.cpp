@@ -492,33 +492,7 @@ bool ElegooCC::shouldPausePrint(unsigned long currentTime)
     if (!startTimeoutMet || !websocketConnected || !notWaitingForAck || !printerIsPrinting ||
         !enoughTicksRemaining || !pauseConditionMet || !notInPauseProgress)
     {
-        logger.logf("Pause blocked - StartTimeout:%d WS:%d NotWaitingAck:%d Printing:%d TicksOK:%d PauseCond:%d NotInProgress:%d (Status:%d)",
-                   startTimeoutMet, websocketConnected, notWaitingForAck, printerIsPrinting, 
-                   enoughTicksRemaining, pauseConditionMet, notInPauseProgress, printStatus);
-        
-        // Additional debug for printing state - log every time to identify frequency issue
-        if (!printerIsPrinting) {
-            const char* statusName = "UNKNOWN";
-            switch(printStatus) {
-                case SDCP_PRINT_STATUS_IDLE: statusName = "IDLE"; break;
-                case SDCP_PRINT_STATUS_HOMING: statusName = "HOMING"; break;
-                case SDCP_PRINT_STATUS_DROPPING: statusName = "DROPPING"; break;
-                case SDCP_PRINT_STATUS_EXPOSURING: statusName = "EXPOSURING"; break;
-                case SDCP_PRINT_STATUS_LIFTING: statusName = "LIFTING"; break;
-                case SDCP_PRINT_STATUS_PAUSING: statusName = "PAUSING"; break;
-                case SDCP_PRINT_STATUS_PAUSED: statusName = "PAUSED"; break;
-                case SDCP_PRINT_STATUS_STOPPING: statusName = "STOPPING"; break;
-                case SDCP_PRINT_STATUS_STOPED: statusName = "STOPPED"; break;
-                case SDCP_PRINT_STATUS_COMPLETE: statusName = "COMPLETE"; break;
-                case SDCP_PRINT_STATUS_FILE_CHECKING: statusName = "FILE_CHECKING"; break;
-                case SDCP_PRINT_STATUS_PRINTING: statusName = "PRINTING"; break;
-                case SDCP_PRINT_STATUS_HEATING: statusName = "HEATING"; break;
-                case SDCP_PRINT_STATUS_BED_LEVELING: statusName = "BED_LEVELING"; break;
-            }
-            logger.logf("Printing debug - printStatus:%d (%s) machineStatusMask:0x%X hasMachineStatus(PRINTING):%d", 
-                       printStatus, statusName, machineStatusMask, hasMachineStatus(SDCP_MACHINE_STATUS_PRINTING));
-        }
-        
+        // Don't log every time - only log when pause conditions change or on actual pause attempts
         return false;
     }
 

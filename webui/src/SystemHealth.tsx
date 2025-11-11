@@ -129,6 +129,39 @@ function SystemHealth() {
     }
   }
 
+  const downloadLogs = async () => {
+    try {
+      const response = await fetch('/logs/download')
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      
+      // Get the log content as text
+      const logContent = await response.text()
+      
+      // Create a blob and download it
+      const blob = new Blob([logContent], { type: 'text/plain' })
+      const url = window.URL.createObjectURL(blob)
+      
+      // Generate filename with timestamp
+      const now = new Date()
+      const filename = `esp32_logs_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.txt`
+      
+      // Create temporary link and trigger download
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      
+      // Cleanup
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (err) {
+      alert(`Error downloading logs: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    }
+  }
+
   onMount(fetchAllData)
 
   return (
@@ -436,13 +469,12 @@ function SystemHealth() {
                 >
                   🗑️ Clear All Storage
                 </button>
-                <a
-                  href="/logs/download"
+                <button
                   class="btn btn-success"
-                  download
+                  onClick={downloadLogs}
                 >
                   📥 Download Logs
-                </a>
+                </button>
                 <button
                   class="btn btn-primary"
                   onClick={fetchAllData}
