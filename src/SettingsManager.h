@@ -18,6 +18,14 @@ struct user_settings
     bool   has_connected;
     int    pause_verification_timeout_ms;
     int    max_pause_retries;
+    // MQTT settings
+    bool   mqtt_enabled;
+    String mqtt_server;
+    int    mqtt_port;
+    String mqtt_username;
+    String mqtt_password;
+    String mqtt_client_id;
+    String mqtt_topic_prefix;
 };
 
 class SettingsManager
@@ -29,11 +37,11 @@ class SettingsManager
 
     SettingsManager();
 
-    SettingsManager(const SettingsManager &)            = delete;
-    SettingsManager &operator=(const SettingsManager &) = delete;
+    SettingsManager(const SettingsManager&)            = delete;
+    SettingsManager& operator=(const SettingsManager&) = delete;
 
    public:
-    static SettingsManager &getInstance();
+    static SettingsManager& getInstance();
 
     // Flag to request WiFi reconnection with new credentials
     bool requestWifiReconnect;
@@ -42,7 +50,7 @@ class SettingsManager
     bool save(bool skipWifiCheck = false);
 
     //  (loads if not already loaded)
-    const user_settings &getSettings();
+    const user_settings& getSettings();
 
     String getSSID();
     String getPassword();
@@ -56,11 +64,19 @@ class SettingsManager
     bool   getHasConnected();
     int    getPauseVerificationTimeoutMs();
     int    getMaxPauseRetries();
+    // MQTT getters
+    bool   getMqttEnabled();
+    String getMqttServer();
+    int    getMqttPort();
+    String getMqttUsername();
+    String getMqttPassword();
+    String getMqttClientId();
+    String getMqttTopicPrefix();
 
-    void setSSID(const String &ssid);
-    void setPassword(const String &password);
+    void setSSID(const String& ssid);
+    void setPassword(const String& password);
     void setAPMode(bool apMode);
-    void setElegooIP(const String &ip);
+    void setElegooIP(const String& ip);
     void setTimeout(int timeout);
     void setFirstLayerTimeout(int timeout);
     void setPauseOnRunout(bool pauseOnRunout);
@@ -69,6 +85,14 @@ class SettingsManager
     void setHasConnected(bool hasConnected);
     void setPauseVerificationTimeoutMs(int timeoutMs);
     void setMaxPauseRetries(int retries);
+    // MQTT setters
+    void setMqttEnabled(bool enabled);
+    void setMqttServer(const String& server);
+    void setMqttPort(int port);
+    void setMqttUsername(const String& username);
+    void setMqttPassword(const String& password);
+    void setMqttClientId(const String& clientId);
+    void setMqttTopicPrefix(const String& topicPrefix);
 
     String toJson(bool includePassword = true);
 };

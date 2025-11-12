@@ -3,25 +3,26 @@
 #include <AsyncJson.h>
 
 #include "ElegooCC.h"
-#include "Logger.h"
 #include "EmbeddedWebUI.h"
-#include "TimeSeriesData.h"
+#include "Logger.h"
+#include "MqttClient.h"
 #include "PauseAttemptData.h"
+#include "TimeSeriesData.h"
 
 #define SPIFFS LittleFS
 
 // External reference to firmware version from main.cpp
-extern const char *firmwareVersion;
-extern const char *chipFamily;
+extern const char* firmwareVersion;
+extern const char* chipFamily;
 
 // External functions for uptime tracking from main.cpp
 extern unsigned long getUptimeSeconds();
-extern String getUptimeFormatted();
+extern String        getUptimeFormatted();
 
 // External timeseries data from main.cpp
-extern TimeSeriesData* movementData;
-extern TimeSeriesData* runoutData;
-extern TimeSeriesData* connectionData;
+extern TimeSeriesData*   movementData;
+extern TimeSeriesData*   runoutData;
+extern TimeSeriesData*   connectionData;
 extern PauseAttemptData* pauseAttemptData;
 
 WebServer::WebServer(int port) : server(port) {}
@@ -32,7 +33,7 @@ void WebServer::begin()
 
     // Get settings endpoint
     server.on("/get_settings", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
                   String jsonResponse = settingsManager.toJson(false);
                   request->send(200, "application/json", jsonResponse);
@@ -40,7 +41,7 @@ void WebServer::begin()
 
     server.addHandler(new AsyncCallbackJsonWebHandler(
         "/update_settings",
-        [this](AsyncWebServerRequest *request, JsonVariant &json)
+        [this](AsyncWebServerRequest* request, JsonVariant& json)
         {
             JsonObject jsonObj = json.as<JsonObject>();
             settingsManager.setElegooIP(jsonObj["elegooip"].as<String>());
@@ -57,25 +58,72 @@ void WebServer::begin()
             settingsManager.setPauseOnRunout(jsonObj["pause_on_runout"].as<bool>());
             settingsManager.setEnabled(jsonObj["enabled"].as<bool>());
             settingsManager.setStartPrintTimeout(jsonObj["start_print_timeout"].as<int>());
-            if (jsonObj.containsKey("pause_verification_timeout_ms")) {
-                settingsManager.setPauseVerificationTimeoutMs(jsonObj["pause_verification_timeout_ms"].as<int>());
+            if (jsonObj.containsKey("pause_verification_timeout_ms"))
+            {
+                settingsManager.setPauseVerificationTimeoutMs(
+                    jsonObj["pause_verification_timeout_ms"].as<int>());
             }
-            if (jsonObj.containsKey("max_pause_retries")) {
+            if (jsonObj.containsKey("max_pause_retries"))
+            {
                 settingsManager.setMaxPauseRetries(jsonObj["max_pause_retries"].as<int>());
             }
+            // MQTT settings
+            if (jsonObj.containsKey("mqtt_enabled"))
+            {
+                settingsManager.setMqttEnabled(jsonObj["mqtt_enabled"].as<bool>());
+            }
+            if (jsonObj.containsKey("mqtt_server"))
+            {
+                settingsManager.setMqttServer(jsonObj["mqtt_server"].as<String>());
+            }
+            if (jsonObj.containsKey("mqtt_port"))
+            {
+                settingsManager.setMqttPort(jsonObj["mqtt_port"].as<int>());
+            }
+            if (jsonObj.containsKey("mqtt_username"))
+            {
+                settingsManager.setMqttUsername(jsonObj["mqtt_username"].as<String>());
+            }
+            if (jsonObj.containsKey("mqtt_password"))
+            {
+                settingsManager.setMqttPassword(jsonObj["mqtt_password"].as<String>());
+            }
+            if (jsonObj.containsKey("mqtt_client_id"))
+            {
+                settingsManager.setMqttClientId(jsonObj["mqtt_client_id"].as<String>());
+            }
+            if (jsonObj.containsKey("mqtt_topic_prefix"))
+            {
+                settingsManager.setMqttTopicPrefix(jsonObj["mqtt_topic_prefix"].as<String>());
+            }
             settingsManager.save();
-            
+
+            // Update MQTT client with new settings
+            extern MqttClient mqttClient;
+            mqttClient.updateSettings(
+                settingsManager.getMqttEnabled(), settingsManager.getMqttServer(),
+                settingsManager.getMqttPort(), settingsManager.getMqttUsername(),
+                settingsManager.getMqttPassword(), settingsManager.getMqttClientId(),
+                settingsManager.getMqttTopicPrefix());
+
             // Log all saved settings for verification
-            logger.log("Settings saved - SSID: " + settingsManager.getSSID() + 
-                      ", ElegooIP: " + settingsManager.getElegooIP() +
-                      ", Timeout: " + String(settingsManager.getTimeout()) + "ms" +
-                      ", FirstLayerTimeout: " + String(settingsManager.getFirstLayerTimeout()) + "ms" +
-                      ", StartPrintTimeout: " + String(settingsManager.getStartPrintTimeout()) + "ms" +
-                      ", PauseOnRunout: " + String(settingsManager.getPauseOnRunout()) +
-                      ", Enabled: " + String(settingsManager.getEnabled()) +
-                      ", PauseVerificationTimeout: " + String(settingsManager.getPauseVerificationTimeoutMs()) + "ms" +
-                      ", MaxPauseRetries: " + String(settingsManager.getMaxPauseRetries()));
-            
+            logger.log("Settings saved - SSID: " + settingsManager.getSSID() +
+                       ", ElegooIP: " + settingsManager.getElegooIP() +
+                       ", Timeout: " + String(settingsManager.getTimeout()) + "ms" +
+                       ", FirstLayerTimeout: " + String(settingsManager.getFirstLayerTimeout()) +
+                       "ms" +
+                       ", StartPrintTimeout: " + String(settingsManager.getStartPrintTimeout()) +
+                       "ms" + ", PauseOnRunout: " + String(settingsManager.getPauseOnRunout()) +
+                       ", Enabled: " + String(settingsManager.getEnabled()) +
+                       ", PauseVerificationTimeout: " +
+                       String(settingsManager.getPauseVerificationTimeoutMs()) + "ms" +
+                       ", MaxPauseRetries: " + String(settingsManager.getMaxPauseRetries()) +
+                       ", MQTT Enabled: " + String(settingsManager.getMqttEnabled()) +
+                       ", MQTT Server: " + settingsManager.getMqttServer() +
+                       ", MQTT Port: " + String(settingsManager.getMqttPort()) +
+                       ", MQTT ClientID: " + settingsManager.getMqttClientId() +
+                       ", MQTT TopicPrefix: " + settingsManager.getMqttTopicPrefix());
+
             jsonObj.clear();
             request->send(200, "text/plain", "ok");
         }));
@@ -85,75 +133,83 @@ void WebServer::begin()
 
     // System health endpoint
     server.on("/system_health", HTTP_GET,
-              [this](AsyncWebServerRequest *request)
+              [this](AsyncWebServerRequest* request)
               {
                   DynamicJsonDocument doc(1024);
-                  
+
                   // Memory information
                   size_t totalHeap = ESP.getHeapSize();
-                  size_t freeHeap = ESP.getFreeHeap();
-                  size_t usedHeap = totalHeap - freeHeap;
-                  
-                  doc["memory"]["total_bytes"] = totalHeap;
-                  doc["memory"]["free_bytes"] = freeHeap;
-                  doc["memory"]["used_bytes"] = usedHeap;
-                  doc["memory"]["total_kb"] = totalHeap / 1024;
-                  doc["memory"]["free_kb"] = freeHeap / 1024;
-                  doc["memory"]["used_kb"] = usedHeap / 1024;
-                  doc["memory"]["usage_percent"] = (int)((float)usedHeap / totalHeap * 100);
+                  size_t freeHeap  = ESP.getFreeHeap();
+                  size_t usedHeap  = totalHeap - freeHeap;
+
+                  doc["memory"]["total_bytes"]   = totalHeap;
+                  doc["memory"]["free_bytes"]    = freeHeap;
+                  doc["memory"]["used_bytes"]    = usedHeap;
+                  doc["memory"]["total_kb"]      = totalHeap / 1024;
+                  doc["memory"]["free_kb"]       = freeHeap / 1024;
+                  doc["memory"]["used_kb"]       = usedHeap / 1024;
+                  doc["memory"]["usage_percent"] = (int) ((float) usedHeap / totalHeap * 100);
                   doc["memory"]["largest_free_block_kb"] = ESP.getMaxAllocHeap() / 1024;
-                  
+
                   // CPU information
                   doc["cpu"]["frequency_mhz"] = ESP.getCpuFreqMHz();
-                  doc["cpu"]["cores"] = ESP.getChipCores();
+                  doc["cpu"]["cores"]         = ESP.getChipCores();
                   // Note: ESP32 doesn't provide real-time CPU usage, but we can show task count
                   doc["cpu"]["usage_note"] = "Real-time CPU usage not available on ESP32";
-                  
+
                   // Flash information
                   size_t totalFlash = ESP.getFlashChipSize();
-                  size_t usedFlash = ESP.getSketchSize();
-                  size_t freeFlash = ESP.getFreeSketchSpace();
-                  
-                  doc["flash"]["total_bytes"] = totalFlash;
-                  doc["flash"]["used_bytes"] = usedFlash;
-                  doc["flash"]["free_bytes"] = freeFlash;
-                  doc["flash"]["total_kb"] = totalFlash / 1024;
-                  doc["flash"]["used_kb"] = usedFlash / 1024;
-                  doc["flash"]["free_kb"] = freeFlash / 1024;
-                  doc["flash"]["usage_percent"] = (int)((float)usedFlash / totalFlash * 100);
-                  
+                  size_t usedFlash  = ESP.getSketchSize();
+                  size_t freeFlash  = ESP.getFreeSketchSpace();
+
+                  doc["flash"]["total_bytes"]   = totalFlash;
+                  doc["flash"]["used_bytes"]    = usedFlash;
+                  doc["flash"]["free_bytes"]    = freeFlash;
+                  doc["flash"]["total_kb"]      = totalFlash / 1024;
+                  doc["flash"]["used_kb"]       = usedFlash / 1024;
+                  doc["flash"]["free_kb"]       = freeFlash / 1024;
+                  doc["flash"]["usage_percent"] = (int) ((float) usedFlash / totalFlash * 100);
+
                   // Uptime information
                   unsigned long uptimeSeconds = millis() / 1000;
-                  doc["uptime"]["seconds"] = uptimeSeconds;
-                  
+                  doc["uptime"]["seconds"]    = uptimeSeconds;
+
                   // Format uptime
-                  int days = uptimeSeconds / 86400;
-                  int hours = (uptimeSeconds % 86400) / 3600;
+                  int days    = uptimeSeconds / 86400;
+                  int hours   = (uptimeSeconds % 86400) / 3600;
                   int minutes = (uptimeSeconds % 3600) / 60;
                   int seconds = uptimeSeconds % 60;
-                  
+
                   String uptimeFormatted = "";
-                  if (days > 0) uptimeFormatted += String(days) + "d ";
-                  if (hours > 0) uptimeFormatted += String(hours) + "h ";
-                  if (minutes > 0) uptimeFormatted += String(minutes) + "m ";
+                  if (days > 0)
+                      uptimeFormatted += String(days) + "d ";
+                  if (hours > 0)
+                      uptimeFormatted += String(hours) + "h ";
+                  if (minutes > 0)
+                      uptimeFormatted += String(minutes) + "m ";
                   uptimeFormatted += String(seconds) + "s";
                   doc["uptime"]["formatted"] = uptimeFormatted;
-                  
+
                   // WiFi information
-                  doc["wifi"]["ssid"] = WiFi.SSID();
-                  doc["wifi"]["rssi"] = WiFi.RSSI();
-                  doc["wifi"]["ip_address"] = WiFi.localIP().toString();
+                  doc["wifi"]["ssid"]        = WiFi.SSID();
+                  doc["wifi"]["rssi"]        = WiFi.RSSI();
+                  doc["wifi"]["ip_address"]  = WiFi.localIP().toString();
                   doc["wifi"]["mac_address"] = WiFi.macAddress();
-                  
-                  int rssi = WiFi.RSSI();
+
+                  int    rssi           = WiFi.RSSI();
                   String signalStrength = "Unknown";
-                  if (rssi > -50) signalStrength = "Excellent";
-                  else if (rssi > -60) signalStrength = "Good";
-                  else if (rssi > -70) signalStrength = "Fair";
-                  else if (rssi > -80) signalStrength = "Weak";
-                  else signalStrength = "Very Weak";
+                  if (rssi > -50)
+                      signalStrength = "Excellent";
+                  else if (rssi > -60)
+                      signalStrength = "Good";
+                  else if (rssi > -70)
+                      signalStrength = "Fair";
+                  else if (rssi > -80)
+                      signalStrength = "Weak";
+                  else
+                      signalStrength = "Very Weak";
                   doc["wifi"]["signal_strength"] = signalStrength;
-                  
+
                   String response;
                   serializeJson(doc, response);
                   request->send(200, "application/json", response);
@@ -161,7 +217,7 @@ void WebServer::begin()
 
     // Sensor status endpoint
     server.on("/sensor_status", HTTP_GET,
-              [this](AsyncWebServerRequest *request)
+              [this](AsyncWebServerRequest* request)
               {
                   // Add elegoo status information using singleton
                   printer_info_t elegooStatus = elegooCC.getCurrentInformation();
@@ -181,9 +237,9 @@ void WebServer::begin()
                   jsonDoc["elegoo"]["PrintSpeedPct"]        = elegooStatus.PrintSpeedPct;
                   jsonDoc["elegoo"]["isWebsocketConnected"] = elegooStatus.isWebsocketConnected;
                   jsonDoc["elegoo"]["currentZ"]             = elegooStatus.currentZ;
-                  
+
                   // Add uptime information
-                  jsonDoc["uptime"]["seconds"] = getUptimeSeconds();
+                  jsonDoc["uptime"]["seconds"]   = getUptimeSeconds();
                   jsonDoc["uptime"]["formatted"] = getUptimeFormatted();
 
                   String jsonResponse;
@@ -193,7 +249,7 @@ void WebServer::begin()
 
     // Logs endpoint (recent logs as JSON)
     server.on("/api/logs", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
                   String jsonResponse = logger.getLogsAsJson();
                   request->send(200, "application/json", jsonResponse);
@@ -201,7 +257,7 @@ void WebServer::begin()
 
     // Historical logs endpoint (all stored logs as text)
     server.on("/logs/history", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
                   String logContents = logger.getLogFileContents();
                   if (logContents.length() == 0)
@@ -212,55 +268,62 @@ void WebServer::begin()
               });
 
     // Download logs endpoint (logs as downloadable file)
-    server.on("/logs/download", HTTP_GET,
-              [](AsyncWebServerRequest *request)
-              {
-                  String logContents = logger.getLogFileContents();
-                  
-                  // Debug information if no logs found
-                  if (logContents.length() == 0)
-                  {
-                      logContents = "No historical logs available.\n\n";
-                      logContents += "Debug Information:\n";
-                      logContents += "- Log file path: /system_logs.txt\n";
-                      logContents += "- Log file exists: " + String(LittleFS.exists("/system_logs.txt") ? "Yes" : "No") + "\n";
-                      logContents += "- Log file size: " + String(logger.getLogFileSize()) + " bytes\n";
-                      logContents += "- In-memory log count: " + String(logger.getLogCount()) + "\n";
-                      logContents += "- LittleFS mounted: " + String(LittleFS.begin() ? "Yes" : "No") + "\n";
-                      
-                      // Force a test log entry to see if logging works
-                      logger.log("Test log entry created during download request");
-                      
-                      // Add some recent in-memory logs if available
-                      String recentLogs = logger.getLogsAsJson();
-                      if (recentLogs.length() > 0) {
-                          logContents += "\nRecent in-memory logs (JSON format):\n";
-                          logContents += recentLogs;
-                      }
-                      
-                      // Try to read the file again after forcing a log entry
-                      String testFileContents = logger.getLogFileContents();
-                      if (testFileContents.length() > 0) {
-                          logContents += "\n\nFile contents after test log:\n";
-                          logContents += testFileContents;
-                      }
-                  }
-                  
-                  // Generate filename with current timestamp
-                  time_t now = time(0);
-                  struct tm* timeinfo = localtime(&now);
-                  char filename[64];
-                  strftime(filename, sizeof(filename), "esp32_logs_%Y%m%d_%H%M%S.txt", timeinfo);
-                  
-                  AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", logContents);
-                  response->addHeader("Content-Disposition", String("attachment; filename=\"") + filename + "\"");
-                  response->addHeader("Content-Type", "text/plain");
-                  request->send(response);
-              });
+    server.on(
+        "/logs/download", HTTP_GET,
+        [](AsyncWebServerRequest* request)
+        {
+            String logContents = logger.getLogFileContents();
+
+            // Debug information if no logs found
+            if (logContents.length() == 0)
+            {
+                logContents = "No historical logs available.\n\n";
+                logContents += "Debug Information:\n";
+                logContents += "- Log file path: /system_logs.txt\n";
+                logContents += "- Log file exists: " +
+                               String(LittleFS.exists("/system_logs.txt") ? "Yes" : "No") + "\n";
+                logContents += "- Log file size: " + String(logger.getLogFileSize()) + " bytes\n";
+                logContents += "- In-memory log count: " + String(logger.getLogCount()) + "\n";
+                logContents +=
+                    "- LittleFS mounted: " + String(LittleFS.begin() ? "Yes" : "No") + "\n";
+
+                // Force a test log entry to see if logging works
+                logger.log("Test log entry created during download request");
+
+                // Add some recent in-memory logs if available
+                String recentLogs = logger.getLogsAsJson();
+                if (recentLogs.length() > 0)
+                {
+                    logContents += "\nRecent in-memory logs (JSON format):\n";
+                    logContents += recentLogs;
+                }
+
+                // Try to read the file again after forcing a log entry
+                String testFileContents = logger.getLogFileContents();
+                if (testFileContents.length() > 0)
+                {
+                    logContents += "\n\nFile contents after test log:\n";
+                    logContents += testFileContents;
+                }
+            }
+
+            // Generate filename with current timestamp
+            time_t     now      = time(0);
+            struct tm* timeinfo = localtime(&now);
+            char       filename[64];
+            strftime(filename, sizeof(filename), "esp32_logs_%Y%m%d_%H%M%S.txt", timeinfo);
+
+            AsyncWebServerResponse* response =
+                request->beginResponse(200, "text/plain", logContents);
+            response->addHeader("Content-Disposition",
+                                String("attachment; filename=\"") + filename + "\"");
+            response->addHeader("Content-Type", "text/plain");
+            request->send(response);
+        });
 
     // Clear logs endpoint
     server.on("/logs/clear", HTTP_POST,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
                   logger.clearLogs();
                   logger.clearLogFile();
@@ -269,26 +332,27 @@ void WebServer::begin()
 
     // Clear all storage endpoint (logs + timeseries data)
     server.on("/storage/clear_all", HTTP_POST,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
                   // Clear logs
                   logger.clearLogs();
                   logger.clearLogFile();
-                  
+
                   // Clear all timeseries data files
-                  if (LittleFS.begin()) {
+                  if (LittleFS.begin())
+                  {
                       LittleFS.remove("/movement_data.json");
                       LittleFS.remove("/runout_data.json");
                       LittleFS.remove("/connection_data.json");
                       LittleFS.remove("/pause_attempt_data.json");
                   }
-                  
+
                   request->send(200, "text/plain", "All storage cleared (logs + timeseries data)");
               });
 
     // Version endpoint
     server.on("/version", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
                   DynamicJsonDocument jsonDoc(256);
                   jsonDoc["firmware_version"] = firmwareVersion;
@@ -302,164 +366,197 @@ void WebServer::begin()
               });
 
     // System health storage info endpoint
-    server.on("/api/storage", HTTP_GET,
-              [](AsyncWebServerRequest *request)
-              {
-                  DynamicJsonDocument jsonDoc(512);
-                  // Basic filesystem info
-                  size_t totalBytes = LittleFS.totalBytes();
-                  size_t usedBytes = LittleFS.usedBytes();
-                  size_t freeBytes = totalBytes - usedBytes;
-                  
-                  // Add filesystem size info for debugging
-                  logger.logf("LittleFS filesystem - Total: %d bytes (%.2f MB), Used: %d bytes (%.2f MB), Free: %d bytes (%.2f MB)", 
-                             totalBytes, totalBytes / (1024.0 * 1024.0), 
-                             usedBytes, usedBytes / (1024.0 * 1024.0),
-                             freeBytes, freeBytes / (1024.0 * 1024.0));
-                  size_t logUsage = logger.getLogFileUsage();
-                  
-                  jsonDoc["total_bytes"] = totalBytes;
-                  jsonDoc["used_bytes"] = usedBytes;
-                  jsonDoc["free_bytes"] = freeBytes;
-                  jsonDoc["total_kb"] = totalBytes / 1024;
-                  jsonDoc["used_kb"] = usedBytes / 1024;
-                  jsonDoc["free_kb"] = freeBytes / 1024;
-                  jsonDoc["total_mb"] = totalBytes / (1024 * 1024);
-                  jsonDoc["usage_percent"] = (usedBytes * 100) / totalBytes;
-                  
-                  // Log file specific info
-                  jsonDoc["log_usage_bytes"] = logUsage;
-                  jsonDoc["log_usage_kb"] = logUsage / 1024;
-                  jsonDoc["log_limit_kb"] = 1536; // 1.5MB
-                  jsonDoc["log_usage_percent"] = (logUsage * 100) / (1536 * 1024); // 1.5MB
-                  
-                  // Timeseries data info
-                  size_t movementSize = movementData ? movementData->getDataSize() : 0;
-                  size_t runoutSize = runoutData ? runoutData->getDataSize() : 0;
-                  size_t connectionSize = connectionData ? connectionData->getDataSize() : 0;
-                  size_t pauseAttemptSize = pauseAttemptData ? pauseAttemptData->getDataSize() : 0;
-                  size_t totalTimeseriesSize = movementSize + runoutSize + connectionSize + pauseAttemptSize;
-                  
-                  jsonDoc["timeseries"]["movement_kb"] = movementSize / 1024;
-                  jsonDoc["timeseries"]["runout_kb"] = runoutSize / 1024;
-                  jsonDoc["timeseries"]["connection_kb"] = connectionSize / 1024;
-                  jsonDoc["timeseries"]["pause_attempts_kb"] = pauseAttemptSize / 1024;
-                  jsonDoc["timeseries"]["total_kb"] = totalTimeseriesSize / 1024;
-                  jsonDoc["timeseries"]["limit_kb"] = 500; // 150KB * 3 + 50KB for pause attempts
-                  jsonDoc["timeseries"]["usage_percent"] = (totalTimeseriesSize * 100) / (500 * 1024);
-                  
-                  jsonDoc["timeseries"]["movement_points"] = movementData ? movementData->getPointCount() : 0;
-                  jsonDoc["timeseries"]["runout_points"] = runoutData ? runoutData->getPointCount() : 0;
-                  jsonDoc["timeseries"]["connection_points"] = connectionData ? connectionData->getPointCount() : 0;
-                  jsonDoc["timeseries"]["pause_attempt_points"] = pauseAttemptData ? pauseAttemptData->getPointCount() : 0;
+    server.on(
+        "/api/storage", HTTP_GET,
+        [](AsyncWebServerRequest* request)
+        {
+            DynamicJsonDocument jsonDoc(512);
+            // Basic filesystem info
+            size_t totalBytes = LittleFS.totalBytes();
+            size_t usedBytes  = LittleFS.usedBytes();
+            size_t freeBytes  = totalBytes - usedBytes;
 
-                  String jsonResponse;
-                  serializeJson(jsonDoc, jsonResponse);
-                  request->send(200, "application/json", jsonResponse);
-              });
+            // Add filesystem size info for debugging
+            logger.logf(
+                "LittleFS filesystem - Total: %d bytes (%.2f MB), Used: %d bytes (%.2f MB), Free: "
+                "%d bytes (%.2f MB)",
+                totalBytes, totalBytes / (1024.0 * 1024.0), usedBytes,
+                usedBytes / (1024.0 * 1024.0), freeBytes, freeBytes / (1024.0 * 1024.0));
+            size_t logUsage = logger.getLogFileUsage();
+
+            jsonDoc["total_bytes"]   = totalBytes;
+            jsonDoc["used_bytes"]    = usedBytes;
+            jsonDoc["free_bytes"]    = freeBytes;
+            jsonDoc["total_kb"]      = totalBytes / 1024;
+            jsonDoc["used_kb"]       = usedBytes / 1024;
+            jsonDoc["free_kb"]       = freeBytes / 1024;
+            jsonDoc["total_mb"]      = totalBytes / (1024 * 1024);
+            jsonDoc["usage_percent"] = (usedBytes * 100) / totalBytes;
+
+            // Log file specific info
+            jsonDoc["log_usage_bytes"]   = logUsage;
+            jsonDoc["log_usage_kb"]      = logUsage / 1024;
+            jsonDoc["log_limit_kb"]      = 1536;                              // 1.5MB
+            jsonDoc["log_usage_percent"] = (logUsage * 100) / (1536 * 1024);  // 1.5MB
+
+            // Timeseries data info
+            size_t movementSize     = movementData ? movementData->getDataSize() : 0;
+            size_t runoutSize       = runoutData ? runoutData->getDataSize() : 0;
+            size_t connectionSize   = connectionData ? connectionData->getDataSize() : 0;
+            size_t pauseAttemptSize = pauseAttemptData ? pauseAttemptData->getDataSize() : 0;
+            size_t totalTimeseriesSize =
+                movementSize + runoutSize + connectionSize + pauseAttemptSize;
+
+            jsonDoc["timeseries"]["movement_kb"]       = movementSize / 1024;
+            jsonDoc["timeseries"]["runout_kb"]         = runoutSize / 1024;
+            jsonDoc["timeseries"]["connection_kb"]     = connectionSize / 1024;
+            jsonDoc["timeseries"]["pause_attempts_kb"] = pauseAttemptSize / 1024;
+            jsonDoc["timeseries"]["total_kb"]          = totalTimeseriesSize / 1024;
+            jsonDoc["timeseries"]["limit_kb"]      = 500;  // 150KB * 3 + 50KB for pause attempts
+            jsonDoc["timeseries"]["usage_percent"] = (totalTimeseriesSize * 100) / (500 * 1024);
+
+            jsonDoc["timeseries"]["movement_points"] =
+                movementData ? movementData->getPointCount() : 0;
+            jsonDoc["timeseries"]["runout_points"] = runoutData ? runoutData->getPointCount() : 0;
+            jsonDoc["timeseries"]["connection_points"] =
+                connectionData ? connectionData->getPointCount() : 0;
+            jsonDoc["timeseries"]["pause_attempt_points"] =
+                pauseAttemptData ? pauseAttemptData->getPointCount() : 0;
+
+            String jsonResponse;
+            serializeJson(jsonDoc, jsonResponse);
+            request->send(200, "application/json", jsonResponse);
+        });
 
     // Human-readable storage page
-    server.on("/storage/view", HTTP_GET,
-              [](AsyncWebServerRequest *request)
-              {
-                  size_t totalBytes = LittleFS.totalBytes();
-                  size_t usedBytes = LittleFS.usedBytes();
-                  size_t freeBytes = totalBytes - usedBytes;
-                  size_t logUsage = logger.getLogFileUsage();
-                  
-                  String html = "<!DOCTYPE html><html><head>";
-                  html += "<title>System Health - Storage Information</title>";
-                  html += "<style>";
-                  html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }";
-                  html += ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }";
-                  html += "h1 { color: #333; text-align: center; }";
-                  html += ".storage-item { margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 4px; }";
-                  html += ".storage-label { font-weight: bold; color: #555; }";
-                  html += ".storage-value { color: #007bff; font-size: 1.1em; }";
-                  html += ".progress-bar { width: 100%; height: 20px; background: #e9ecef; border-radius: 10px; overflow: hidden; margin: 5px 0; }";
-                  html += ".progress-fill { height: 100%; background: linear-gradient(90deg, #28a745, #ffc107, #dc3545); transition: width 0.3s; }";
-                  html += ".log-progress { background: linear-gradient(90deg, #17a2b8, #6f42c1); }";
-                  html += ".nav-link { display: inline-block; margin: 10px 5px; padding: 8px 15px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }";
-                  html += ".nav-link:hover { background: #0056b3; }";
-                  html += "</style></head><body>";
-                  
-                  html += "<div class='container'>";
-                  html += "<h1>🖥️ System Health - Storage Information</h1>";
-                  
-                  // Navigation
-                  html += "<div style='text-align: center; margin-bottom: 20px;'>";
-                  html += "<a href='/' class='nav-link'>🏠 Home</a>";
-                  html += "<a href='/logs/history' class='nav-link'>📋 View Logs</a>";
-                  html += "<a href='/storage' class='nav-link'>📊 JSON Data</a>";
-                  html += "</div>";
-                  
-                  // Filesystem Storage
-                  html += "<div class='storage-item'>";
-                  html += "<div class='storage-label'>💾 Filesystem Storage</div>";
-                  html += "<div class='storage-value'>Total: " + String(totalBytes / 1024) + " KB (" + String(totalBytes) + " bytes)</div>";
-                  html += "<div class='storage-value'>Used: " + String(usedBytes / 1024) + " KB (" + String(usedBytes) + " bytes)</div>";
-                  html += "<div class='storage-value'>Free: " + String(freeBytes / 1024) + " KB (" + String(freeBytes) + " bytes)</div>";
-                  
-                  int usagePercent = (usedBytes * 100) / totalBytes;
-                  html += "<div class='progress-bar'>";
-                  html += "<div class='progress-fill' style='width: " + String(usagePercent) + "%'></div>";
-                  html += "</div>";
-                  html += "<div>Usage: " + String(usagePercent) + "%</div>";
-                  html += "</div>";
-                  
-                  // Log Storage
-                  html += "<div class='storage-item'>";
-                  html += "<div class='storage-label'>📝 Log Storage</div>";
-                  html += "<div class='storage-value'>Used: " + String(logUsage / 1024) + " KB (" + String(logUsage) + " bytes)</div>";
-                  html += "<div class='storage-value'>Limit: 200 KB (204,800 bytes)</div>";
-                  html += "<div class='storage-value'>Available: " + String((200 * 1024 - logUsage) / 1024) + " KB</div>";
-                  
-                  int logPercent = (logUsage * 100) / (200 * 1024);
-                  html += "<div class='progress-bar'>";
-                  html += "<div class='progress-fill log-progress' style='width: " + String(logPercent) + "%'></div>";
-                  html += "</div>";
-                  html += "<div>Log Usage: " + String(logPercent) + "%</div>";
-                  html += "</div>";
-                  
-                  // Storage Breakdown
-                  html += "<div class='storage-item'>";
-                  html += "<div class='storage-label'>📁 Storage Breakdown</div>";
-                  html += "<div>• Settings: ~1 KB</div>";
-                  html += "<div>• WebUI Assets: Embedded in firmware</div>";
-                  html += "<div>• Log Files: " + String(logUsage / 1024) + " KB</div>";
-                  html += "<div>• Other Files: " + String((usedBytes - logUsage) / 1024) + " KB</div>";
-                  html += "<p style='margin-top: 10px; font-size: 0.9em; color: #666;'>• Logs are automatically rotated when they exceed 200KB</p>";
-                  html += "</div>";
-                  
-                  // Actions
-                  html += "<div class='storage-item' style='text-align: center;'>";
-                  html += "<div class='storage-label'>🔧 Actions</div>";
-                  html += "<button onclick='clearLogs()' style='margin: 5px; padding: 8px 15px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;'>Clear All Logs</button>";
-                  html += "<button onclick='location.reload()' style='margin: 5px; padding: 8px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;'>Refresh</button>";
-                  html += "</div>";
-                  
-                  html += "</div>";
-                  
-                  // JavaScript
-                  html += "<script>";
-                  html += "function clearLogs() {";
-                  html += "  if (confirm('Are you sure you want to clear all logs?')) {";
-                  html += "    fetch('/logs/clear', { method: 'POST' })";
-                  html += "      .then(response => response.text())";
-                  html += "      .then(data => { alert(data); location.reload(); })";
-                  html += "      .catch(error => alert('Error: ' + error));";
-                  html += "  }";
-                  html += "}";
-                  html += "</script>";
-                  
-                  html += "</body></html>";
-                  
-                  request->send(200, "text/html", html);
-              });
+    server.on(
+        "/storage/view", HTTP_GET,
+        [](AsyncWebServerRequest* request)
+        {
+            size_t totalBytes = LittleFS.totalBytes();
+            size_t usedBytes  = LittleFS.usedBytes();
+            size_t freeBytes  = totalBytes - usedBytes;
+            size_t logUsage   = logger.getLogFileUsage();
+
+            String html = "<!DOCTYPE html><html><head>";
+            html += "<title>System Health - Storage Information</title>";
+            html += "<style>";
+            html += "body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }";
+            html +=
+                ".container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; "
+                "border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }";
+            html += "h1 { color: #333; text-align: center; }";
+            html +=
+                ".storage-item { margin: 15px 0; padding: 10px; background: #f8f9fa; "
+                "border-radius: 4px; }";
+            html += ".storage-label { font-weight: bold; color: #555; }";
+            html += ".storage-value { color: #007bff; font-size: 1.1em; }";
+            html +=
+                ".progress-bar { width: 100%; height: 20px; background: #e9ecef; border-radius: "
+                "10px; overflow: hidden; margin: 5px 0; }";
+            html +=
+                ".progress-fill { height: 100%; background: linear-gradient(90deg, #28a745, "
+                "#ffc107, #dc3545); transition: width 0.3s; }";
+            html += ".log-progress { background: linear-gradient(90deg, #17a2b8, #6f42c1); }";
+            html +=
+                ".nav-link { display: inline-block; margin: 10px 5px; padding: 8px 15px; "
+                "background: #007bff; color: white; text-decoration: none; border-radius: 4px; }";
+            html += ".nav-link:hover { background: #0056b3; }";
+            html += "</style></head><body>";
+
+            html += "<div class='container'>";
+            html += "<h1>🖥️ System Health - Storage Information</h1>";
+
+            // Navigation
+            html += "<div style='text-align: center; margin-bottom: 20px;'>";
+            html += "<a href='/' class='nav-link'>🏠 Home</a>";
+            html += "<a href='/logs/history' class='nav-link'>📋 View Logs</a>";
+            html += "<a href='/storage' class='nav-link'>📊 JSON Data</a>";
+            html += "</div>";
+
+            // Filesystem Storage
+            html += "<div class='storage-item'>";
+            html += "<div class='storage-label'>💾 Filesystem Storage</div>";
+            html += "<div class='storage-value'>Total: " + String(totalBytes / 1024) + " KB (" +
+                    String(totalBytes) + " bytes)</div>";
+            html += "<div class='storage-value'>Used: " + String(usedBytes / 1024) + " KB (" +
+                    String(usedBytes) + " bytes)</div>";
+            html += "<div class='storage-value'>Free: " + String(freeBytes / 1024) + " KB (" +
+                    String(freeBytes) + " bytes)</div>";
+
+            int usagePercent = (usedBytes * 100) / totalBytes;
+            html += "<div class='progress-bar'>";
+            html +=
+                "<div class='progress-fill' style='width: " + String(usagePercent) + "%'></div>";
+            html += "</div>";
+            html += "<div>Usage: " + String(usagePercent) + "%</div>";
+            html += "</div>";
+
+            // Log Storage
+            html += "<div class='storage-item'>";
+            html += "<div class='storage-label'>📝 Log Storage</div>";
+            html += "<div class='storage-value'>Used: " + String(logUsage / 1024) + " KB (" +
+                    String(logUsage) + " bytes)</div>";
+            html += "<div class='storage-value'>Limit: 200 KB (204,800 bytes)</div>";
+            html +=
+                "<div class='storage-value'>Available: " + String((200 * 1024 - logUsage) / 1024) +
+                " KB</div>";
+
+            int logPercent = (logUsage * 100) / (200 * 1024);
+            html += "<div class='progress-bar'>";
+            html += "<div class='progress-fill log-progress' style='width: " + String(logPercent) +
+                    "%'></div>";
+            html += "</div>";
+            html += "<div>Log Usage: " + String(logPercent) + "%</div>";
+            html += "</div>";
+
+            // Storage Breakdown
+            html += "<div class='storage-item'>";
+            html += "<div class='storage-label'>📁 Storage Breakdown</div>";
+            html += "<div>• Settings: ~1 KB</div>";
+            html += "<div>• WebUI Assets: Embedded in firmware</div>";
+            html += "<div>• Log Files: " + String(logUsage / 1024) + " KB</div>";
+            html += "<div>• Other Files: " + String((usedBytes - logUsage) / 1024) + " KB</div>";
+            html +=
+                "<p style='margin-top: 10px; font-size: 0.9em; color: #666;'>• Logs are "
+                "automatically rotated when they exceed 200KB</p>";
+            html += "</div>";
+
+            // Actions
+            html += "<div class='storage-item' style='text-align: center;'>";
+            html += "<div class='storage-label'>🔧 Actions</div>";
+            html +=
+                "<button onclick='clearLogs()' style='margin: 5px; padding: 8px 15px; background: "
+                "#dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;'>Clear "
+                "All Logs</button>";
+            html +=
+                "<button onclick='location.reload()' style='margin: 5px; padding: 8px 15px; "
+                "background: #28a745; color: white; border: none; border-radius: 4px; cursor: "
+                "pointer;'>Refresh</button>";
+            html += "</div>";
+
+            html += "</div>";
+
+            // JavaScript
+            html += "<script>";
+            html += "function clearLogs() {";
+            html += "  if (confirm('Are you sure you want to clear all logs?')) {";
+            html += "    fetch('/logs/clear', { method: 'POST' })";
+            html += "      .then(response => response.text())";
+            html += "      .then(data => { alert(data); location.reload(); })";
+            html += "      .catch(error => alert('Error: ' + error));";
+            html += "  }";
+            html += "}";
+            html += "</script>";
+
+            html += "</body></html>";
+
+            request->send(200, "text/html", html);
+        });
 
     // Restart endpoint
     server.on("/restart", HTTP_POST,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
                   logger.log("Restart requested via WebUI");
                   request->send(200, "text/plain", "Restarting device...");
@@ -470,7 +567,7 @@ void WebServer::begin()
 
     // Test pause endpoint
     server.on("/test_pause", HTTP_POST,
-              [this](AsyncWebServerRequest *request)
+              [this](AsyncWebServerRequest* request)
               {
                   logger.log("Test pause requested via WebUI");
                   elegooCC.pausePrint();
@@ -478,119 +575,158 @@ void WebServer::begin()
               });
 
     server.on("/test_movement_stop", HTTP_POST,
-              [this](AsyncWebServerRequest *request)
+              [this](AsyncWebServerRequest* request)
               {
-                  logger.log("Test movement stop requested via WebUI - simulating filament stopped for 10 minutes");
+                  logger.log(
+                      "Test movement stop requested via WebUI - simulating filament stopped for 10 "
+                      "minutes");
                   elegooCC.triggerTestMovementStop();
-                  request->send(200, "text/plain", "Test movement stop triggered - filament will appear stopped for 10 minutes");
+                  request->send(
+                      200, "text/plain",
+                      "Test movement stop triggered - filament will appear stopped for 10 minutes");
               });
 
     // Timeseries data endpoints
     server.on("/api/timeseries/movement", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
-                  if (movementData) {
+                  if (movementData)
+                  {
                       String data = movementData->getDataAsJSON(100);
                       request->send(200, "application/json", data);
-                  } else {
-                      request->send(500, "application/json", "{\"error\":\"Movement data not initialized\"}");
+                  }
+                  else
+                  {
+                      request->send(500, "application/json",
+                                    "{\"error\":\"Movement data not initialized\"}");
                   }
               });
 
     server.on("/api/timeseries/runout", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
-                  if (runoutData) {
+                  if (runoutData)
+                  {
                       String data = runoutData->getDataAsJSON(100);
                       request->send(200, "application/json", data);
-                  } else {
-                      request->send(500, "application/json", "{\"error\":\"Runout data not initialized\"}");
+                  }
+                  else
+                  {
+                      request->send(500, "application/json",
+                                    "{\"error\":\"Runout data not initialized\"}");
                   }
               });
 
     server.on("/api/timeseries/connection", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
-                  if (connectionData) {
+                  if (connectionData)
+                  {
                       String data = connectionData->getDataAsJSON(100);
                       request->send(200, "application/json", data);
-                  } else {
-                      request->send(500, "application/json", "{\"error\":\"Connection data not initialized\"}");
+                  }
+                  else
+                  {
+                      request->send(500, "application/json",
+                                    "{\"error\":\"Connection data not initialized\"}");
                   }
               });
 
     server.on("/api/timeseries/pause_attempts", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
-                  if (pauseAttemptData) {
+                  if (pauseAttemptData)
+                  {
                       String data = pauseAttemptData->getDataAsJSON(100);
                       request->send(200, "application/json", data);
-                  } else {
-                      request->send(500, "application/json", "{\"error\":\"Pause attempt data not initialized\"}");
+                  }
+                  else
+                  {
+                      request->send(500, "application/json",
+                                    "{\"error\":\"Pause attempt data not initialized\"}");
                   }
               });
 
     server.on("/api/timeseries/pause_attempts/stats", HTTP_GET,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
-                  if (pauseAttemptData) {
+                  if (pauseAttemptData)
+                  {
                       String stats = pauseAttemptData->getStatistics();
                       request->send(200, "application/json", stats);
-                  } else {
-                      request->send(500, "application/json", "{\"error\":\"Pause attempt data not initialized\"}");
+                  }
+                  else
+                  {
+                      request->send(500, "application/json",
+                                    "{\"error\":\"Pause attempt data not initialized\"}");
                   }
               });
 
     // Clear timeseries data endpoints
     server.on("/api/timeseries/clear", HTTP_POST,
-              [](AsyncWebServerRequest *request)
+              [](AsyncWebServerRequest* request)
               {
-                  if (movementData) movementData->clearData();
-                  if (runoutData) runoutData->clearData();
-                  if (connectionData) connectionData->clearData();
-                  if (pauseAttemptData) pauseAttemptData->clearData();
+                  if (movementData)
+                      movementData->clearData();
+                  if (runoutData)
+                      runoutData->clearData();
+                  if (connectionData)
+                      connectionData->clearData();
+                  if (pauseAttemptData)
+                      pauseAttemptData->clearData();
                   request->send(200, "text/plain", "All timeseries data cleared");
               });
 
     // Favicon not embedded - browsers will handle gracefully without it
-    
+
     // SPA fallback and asset serving
-    server.onNotFound([](AsyncWebServerRequest *request) {
-        String path = request->url();
-        
-        // Check if it's an API endpoint
-        if (path.startsWith("/get_") || path.startsWith("/update_") || 
-            path.startsWith("/sensor_") || path.startsWith("/logs/") || 
-            path.startsWith("/version") || path.startsWith("/restart") || 
-            path.startsWith("/storage/") || path.startsWith("/api/")) {
-            request->send(404, "text/plain", "Not Found");
-            return;
-        }
-        
-        // Handle CSS files
-        if (path.startsWith("/assets/") && path.endsWith(".css")) {
-            AsyncWebServerResponse *response = request->beginResponse(200, webui_css_mime, webui_css_gz, webui_css_gz_len);
-            if (webui_css_compressed) response->addHeader("Content-Encoding", "gzip");
-            response->addHeader("Cache-Control", "max-age=31536000");
+    server.onNotFound(
+        [](AsyncWebServerRequest* request)
+        {
+            String path = request->url();
+
+            // Check if it's an API endpoint
+            if (path.startsWith("/get_") || path.startsWith("/update_") ||
+                path.startsWith("/sensor_") || path.startsWith("/logs/") ||
+                path.startsWith("/version") || path.startsWith("/restart") ||
+                path.startsWith("/storage/") || path.startsWith("/api/"))
+            {
+                request->send(404, "text/plain", "Not Found");
+                return;
+            }
+
+            // Handle CSS files
+            if (path.startsWith("/assets/") && path.endsWith(".css"))
+            {
+                AsyncWebServerResponse* response =
+                    request->beginResponse(200, webui_css_mime, webui_css_gz, webui_css_gz_len);
+                if (webui_css_compressed)
+                    response->addHeader("Content-Encoding", "gzip");
+                response->addHeader("Cache-Control", "max-age=31536000");
+                request->send(response);
+                return;
+            }
+
+            // Handle JS files
+            if (path.startsWith("/assets/") && path.endsWith(".js"))
+            {
+                AsyncWebServerResponse* response =
+                    request->beginResponse(200, webui_js_mime, webui_js_gz, webui_js_gz_len);
+                if (webui_js_compressed)
+                    response->addHeader("Content-Encoding", "gzip");
+                response->addHeader("Cache-Control", "max-age=31536000");
+                request->send(response);
+                return;
+            }
+
+            // Serve embedded WebUI index file for all other routes (SPA fallback)
+            AsyncWebServerResponse* response = request->beginResponse(
+                200, webui_index_html_mime, webui_index_html_gz, webui_index_html_gz_len);
+            if (webui_index_html_compressed)
+                response->addHeader("Content-Encoding", "gzip");
+            response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
             request->send(response);
-            return;
-        }
-        
-        // Handle JS files
-        if (path.startsWith("/assets/") && path.endsWith(".js")) {
-            AsyncWebServerResponse *response = request->beginResponse(200, webui_js_mime, webui_js_gz, webui_js_gz_len);
-            if (webui_js_compressed) response->addHeader("Content-Encoding", "gzip");
-            response->addHeader("Cache-Control", "max-age=31536000");
-            request->send(response);
-            return;
-        }
-        
-        // Serve embedded WebUI index file for all other routes (SPA fallback)
-        AsyncWebServerResponse *response = request->beginResponse(200, webui_index_html_mime, webui_index_html_gz, webui_index_html_gz_len);
-        if (webui_index_html_compressed) response->addHeader("Content-Encoding", "gzip");
-        response->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-        request->send(response);
-    });
+        });
 }
 
 void WebServer::loop()

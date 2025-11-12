@@ -5,12 +5,13 @@
 #include "ElegooCC.h"
 #include "LittleFS.h"
 #include "Logger.h"
+#include "MqttClient.h"
+#include "PauseAttemptData.h"
 #include "SettingsManager.h"
+#include "TimeSeriesData.h"
 #include "WebServer.h"
 #include "improv.h"
 #include "time.h"
-#include "TimeSeriesData.h"
-#include "PauseAttemptData.h"
 
 #define SPIFFS LittleFS
 
@@ -38,7 +39,8 @@ const char* chipFamily      = GET_VERSION_STRING(CHIP_FAMILY_RAW, "Unknown");
 // NTP server to request epoch time
 const char* ntpServer = "pool.ntp.org";
 
-WebServer webServer(80);
+WebServer  webServer(80);
+MqttClient mqttClient;
 
 // Variables to track WiFi connection monitoring
 unsigned long lastWifiCheck      = 0;
@@ -53,12 +55,12 @@ bool isNtpSetup       = false;
 
 // Uptime tracking (starts after NTP sync)
 unsigned long uptimeStartMillis = 0;
-bool uptimeStarted = false;
+bool          uptimeStarted     = false;
 
 // Timeseries data storage (150KB each, except pause attempts which is 50KB)
-TimeSeriesData* movementData = nullptr;
-TimeSeriesData* runoutData = nullptr;
-TimeSeriesData* connectionData = nullptr;
+TimeSeriesData*   movementData     = nullptr;
+TimeSeriesData*   runoutData       = nullptr;
+TimeSeriesData*   connectionData   = nullptr;
 PauseAttemptData* pauseAttemptData = nullptr;
 
 // Forward declaration
@@ -69,37 +71,44 @@ uint8_t x_buffer[16];
 uint8_t x_position = 0;
 
 // Function to get uptime in seconds since NTP sync
-unsigned long getUptimeSeconds() {
-    if (!uptimeStarted) {
+unsigned long getUptimeSeconds()
+{
+    if (!uptimeStarted)
+    {
         return 0;
     }
     return (millis() - uptimeStartMillis) / 1000;
 }
 
 // Function to format uptime in human readable format
-String getUptimeFormatted() {
-    if (!uptimeStarted) {
+String getUptimeFormatted()
+{
+    if (!uptimeStarted)
+    {
         return "Not started (waiting for NTP sync)";
     }
-    
+
     unsigned long uptimeSeconds = getUptimeSeconds();
-    unsigned long days = uptimeSeconds / 86400;
-    unsigned long hours = (uptimeSeconds % 86400) / 3600;
-    unsigned long minutes = (uptimeSeconds % 3600) / 60;
-    unsigned long seconds = uptimeSeconds % 60;
-    
+    unsigned long days          = uptimeSeconds / 86400;
+    unsigned long hours         = (uptimeSeconds % 86400) / 3600;
+    unsigned long minutes       = (uptimeSeconds % 3600) / 60;
+    unsigned long seconds       = uptimeSeconds % 60;
+
     String result = "";
-    if (days > 0) {
+    if (days > 0)
+    {
         result += String(days) + "d ";
     }
-    if (hours > 0 || days > 0) {
+    if (hours > 0 || days > 0)
+    {
         result += String(hours) + "h ";
     }
-    if (minutes > 0 || hours > 0 || days > 0) {
+    if (minutes > 0 || hours > 0 || days > 0)
+    {
         result += String(minutes) + "m ";
     }
     result += String(seconds) + "s";
-    
+
     return result;
 }
 
@@ -303,30 +312,47 @@ void setup()
     logger.logf("Chip family: %s", chipFamily);
 
     // Initialize LittleFS with auto-format if corrupted
-    if (!SPIFFS.begin(true)) {  // true = format if mount fails
+    if (!SPIFFS.begin(true))
+    {  // true = format if mount fails
         logger.log("LittleFS mount failed, formatting...");
-        if (SPIFFS.format()) {
+        if (SPIFFS.format())
+        {
             logger.log("LittleFS formatted successfully");
-            if (SPIFFS.begin()) {
+            if (SPIFFS.begin())
+            {
                 logger.log("LittleFS mounted after format");
-            } else {
+            }
+            else
+            {
                 logger.log("LittleFS mount failed even after format!");
             }
-        } else {
+        }
+        else
+        {
             logger.log("LittleFS format failed!");
         }
-    } else {
+    }
+    else
+    {
         logger.log("LittleFS mounted successfully");
     }
 
     // Load settings early
     settingsManager.load();
     logger.log("Settings Manager Loaded");
-    
+
+    // Initialize MQTT client with settings first
+    mqttClient.updateSettings(settingsManager.getMqttEnabled(), settingsManager.getMqttServer(),
+                              settingsManager.getMqttPort(), settingsManager.getMqttUsername(),
+                              settingsManager.getMqttPassword(), settingsManager.getMqttClientId(),
+                              settingsManager.getMqttTopicPrefix());
+    mqttClient.begin();
+    logger.log("MQTT Client initialized");
+
     // Initialize timeseries data storage
-    movementData = new TimeSeriesData("/movement_data.json");
-    runoutData = new TimeSeriesData("/runout_data.json");
-    connectionData = new TimeSeriesData("/connection_data.json");
+    movementData     = new TimeSeriesData("/movement_data.json");
+    runoutData       = new TimeSeriesData("/runout_data.json");
+    connectionData   = new TimeSeriesData("/connection_data.json");
     pauseAttemptData = new PauseAttemptData("/pause_attempt_data.json");
     logger.log("Timeseries data storage initialized");
 }
@@ -531,24 +557,31 @@ void loop()
             isElegooSetup = true;
         }
         elegooCC.loop();
-        
+
         // Collect timeseries data every 2 seconds
         static unsigned long lastDataCollection = 0;
-        if (currentTime - lastDataCollection >= 2000) {
+        if (currentTime - lastDataCollection >= 2000)
+        {
             lastDataCollection = currentTime;
-            
-            if (movementData && runoutData && connectionData) {
+
+            if (movementData && runoutData && connectionData)
+            {
                 printer_info_t info = elegooCC.getCurrentInformation();
-                
+
                 // Movement detection (1 = movement detected, 0 = no movement)
                 bool movementDetected = digitalRead(MOVEMENT_SENSOR_PIN) == LOW;
                 movementData->addDataPoint(movementDetected ? 1.0 : 0.0);
-                
+
                 // Runout detection (1 = runout detected, 0 = filament present)
                 runoutData->addDataPoint(info.filamentRunout ? 1.0 : 0.0);
-                
+
                 // Connection status (1 = connected, 0 = disconnected)
                 connectionData->addDataPoint(info.isWebsocketConnected ? 1.0 : 0.0);
+
+                // Publish MQTT data
+                mqttClient.publishMovementData(movementDetected);
+                mqttClient.publishRunoutData(info.filamentRunout);
+                mqttClient.publishConnectionData(info.isWebsocketConnected);
             }
         }
 
@@ -558,11 +591,12 @@ void loop()
             syncTimeWithNTP(currentTime);
             logger.log("NTP setup complete");
             isNtpSetup = true;
-            
+
             // Start uptime tracking after NTP sync
-            if (!uptimeStarted) {
+            if (!uptimeStarted)
+            {
                 uptimeStartMillis = millis();
-                uptimeStarted = true;
+                uptimeStarted     = true;
                 logger.log("Uptime tracking started");
             }
         }
@@ -570,11 +604,31 @@ void loop()
         {
             syncTimeWithNTP(currentTime);
         }
+
+        // Publish system health data every 60 seconds
+        static unsigned long lastHealthPublish = 0;
+        if (currentTime - lastHealthPublish >= 60000)
+        {
+            lastHealthPublish = currentTime;
+
+            // Calculate heap usage percentage
+            size_t totalHeap        = ESP.getHeapSize();
+            size_t freeHeap         = ESP.getFreeHeap();
+            int    heapUsagePercent = (int) ((float) (totalHeap - freeHeap) / totalHeap * 100);
+
+            // Get WiFi signal strength
+            int rssi = WiFi.RSSI();
+
+            mqttClient.publishSystemHealth(heapUsagePercent, rssi);
+        }
     }
     else if (currentTime - lastWifiCheck >= WIFI_CHECK_INTERVAL)
     {
         checkWifiConnection();
     }
+
+    // Handle MQTT client
+    mqttClient.loop();
 
     webServer.loop();
 }

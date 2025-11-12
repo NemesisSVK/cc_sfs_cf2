@@ -128,7 +128,18 @@ def build_and_embed_webui(target, source, env):
     if os.path.exists(webui_dir) and os.path.exists(os.path.join(webui_dir, "package.json")):
         try:
             os.chdir(webui_dir)
-            result = subprocess.run(["npm", "run", "build"], 
+            # Use full path to npm.cmd on Windows
+            npm_cmd = r"C:\Program Files\nodejs\npm.cmd" if os.name == 'nt' else "npm"
+            print(f"Using npm: {npm_cmd}")
+
+            # Install dependencies first
+            print("Installing npm dependencies...")
+            result = subprocess.run([npm_cmd, "install"],
+                                  capture_output=True, text=True, check=True)
+            print("✅ Dependencies installed successfully")
+
+            # Build the WebUI
+            result = subprocess.run([npm_cmd, "run", "build"],
                                   capture_output=True, text=True, check=True)
             print("✅ WebUI build completed successfully")
             os.chdir(project_dir)

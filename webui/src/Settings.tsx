@@ -15,6 +15,14 @@ function Settings() {
   const [enabled, setEnabled] = createSignal(true);
   const [pauseVerificationTimeout, setPauseVerificationTimeout] = createSignal(15000);
   const [maxPauseRetries, setMaxPauseRetries] = createSignal(3);
+  // MQTT settings
+  const [mqttEnabled, setMqttEnabled] = createSignal(false);
+  const [mqttServer, setMqttServer] = createSignal('');
+  const [mqttPort, setMqttPort] = createSignal(1883);
+  const [mqttUsername, setMqttUsername] = createSignal('');
+  const [mqttPassword, setMqttPassword] = createSignal('');
+  const [mqttClientId, setMqttClientId] = createSignal('');
+  const [mqttTopicPrefix, setMqttTopicPrefix] = createSignal('homeassistant');
   // Load settings from the server and scan for WiFi networks
   onMount(async () => {
     try {
@@ -39,6 +47,13 @@ function Settings() {
       setEnabled(settings.enabled !== undefined ? settings.enabled : true)
       setPauseVerificationTimeout(settings.pause_verification_timeout_ms || 15000)
       setMaxPauseRetries(settings.max_pause_retries || 0)
+      // MQTT settings
+      setMqttEnabled(settings.mqtt_enabled || false)
+      setMqttServer(settings.mqtt_server || '')
+      setMqttPort(settings.mqtt_port || 1883)
+      setMqttUsername(settings.mqtt_username || '')
+      setMqttClientId(settings.mqtt_client_id || '')
+      setMqttTopicPrefix(settings.mqtt_topic_prefix || 'cc_sfs')
 
       setError('')
     } catch (err: any) {
@@ -67,6 +82,14 @@ function Settings() {
         enabled: enabled(),
         pause_verification_timeout_ms: pauseVerificationTimeout(),
         max_pause_retries: maxPauseRetries(),
+        // MQTT settings
+        mqtt_enabled: mqttEnabled(),
+        mqtt_server: mqttServer(),
+        mqtt_port: mqttPort(),
+        mqtt_username: mqttUsername(),
+        mqtt_password: mqttPassword(),
+        mqtt_client_id: mqttClientId(),
+        mqtt_topic_prefix: mqttTopicPrefix(),
       }
 
       const response = await fetch('/update_settings', {
@@ -258,7 +281,7 @@ function Settings() {
           </fieldset>
 
           <h2 class="text-lg font-bold mb-4 mt-10">Pause Verification Settings</h2>
-          
+
           <div role="alert" class="mb-6 alert alert-info alert-soft">
             <div>
               <h3 class="font-bold">Why Pause Verification?</h3>
@@ -304,6 +327,123 @@ function Settings() {
             />
             <p class="label">Number of times to retry pause command if verification fails</p>
           </fieldset>
+
+          <h2 class="text-lg font-bold mb-4 mt-10">MQTT Settings</h2>
+
+          <div role="alert" class="mb-6 alert alert-info alert-soft">
+            <div>
+              <h3 class="font-bold">Home Assistant MQTT Discovery</h3>
+              <p class="mt-2">Enable MQTT with Home Assistant discovery to automatically create sensors in your Home Assistant instance. Set the topic prefix to "homeassistant" for automatic discovery.</p>
+              <p class="mt-2"><strong>Auto-Discovered Sensors:</strong></p>
+              <ul class="list-disc list-inside mt-1 ml-4">
+                <li><strong>Movement Sensor</strong> - Detects printer movement</li>
+                <li><strong>Filament Runout</strong> - Monitors filament status</li>
+                <li><strong>Printer Connection</strong> - Shows printer connectivity</li>
+                <li><strong>Heap Usage</strong> - System memory usage (%)</li>
+                <li><strong>WiFi Signal</strong> - WiFi signal strength (dBm)</li>
+              </ul>
+              <p class="mt-2"><strong>Topic Structure:</strong></p>
+              <ul class="list-disc list-inside mt-1 ml-4">
+                <li>Config: <code>{mqttTopicPrefix()}/sensor/&#123;client_id&#125;_movement/config</code></li>
+                <li>State: <code>{mqttTopicPrefix()}/sensor/&#123;client_id&#125;_movement/state</code></li>
+              </ul>
+              <p class="mt-2 text-sm">All sensors will appear automatically in Home Assistant under the device name "CC SFS Filament Sensor".</p>
+            </div>
+          </div>
+
+          <fieldset class="fieldset">
+            <legend class="fieldset-legend">Enable MQTT</legend>
+            <label class="label cursor-pointer">
+              <input
+                type="checkbox"
+                id="mqttEnabled"
+                checked={mqttEnabled()}
+                onChange={(e) => setMqttEnabled(e.target.checked)}
+                class="checkbox checkbox-accent"
+              />
+              <span class="label-text">Enable MQTT client and data publishing</span>
+            </label>
+          </fieldset>
+
+          {mqttEnabled() && (
+            <>
+              <fieldset class="fieldset">
+                <legend class="fieldset-legend">MQTT Server</legend>
+                <input
+                  type="text"
+                  id="mqttServer"
+                  value={mqttServer()}
+                  onInput={(e) => setMqttServer(e.target.value)}
+                  placeholder="192.168.1.100 or mqtt.example.com"
+                  class="input"
+                />
+              </fieldset>
+
+              <fieldset class="fieldset">
+                <legend class="fieldset-legend">MQTT Port</legend>
+                <input
+                  type="number"
+                  id="mqttPort"
+                  value={mqttPort()}
+                  onInput={(e) => setMqttPort(parseInt(e.target.value) || mqttPort())}
+                  min="1"
+                  max="65535"
+                  class="input"
+                />
+                <p class="label">Default MQTT port is 1883 (1884 for secure MQTT)</p>
+              </fieldset>
+
+              <fieldset class="fieldset">
+                <legend class="fieldset-legend">MQTT Username</legend>
+                <input
+                  type="text"
+                  id="mqttUsername"
+                  value={mqttUsername()}
+                  onInput={(e) => setMqttUsername(e.target.value)}
+                  placeholder="Optional username"
+                  class="input"
+                />
+              </fieldset>
+
+              <fieldset class="fieldset">
+                <legend class="fieldset-legend">MQTT Password</legend>
+                <input
+                  type="password"
+                  id="mqttPassword"
+                  value={mqttPassword()}
+                  onInput={(e) => setMqttPassword(e.target.value)}
+                  placeholder="Optional password"
+                  class="input"
+                />
+              </fieldset>
+
+              <fieldset class="fieldset">
+                <legend class="fieldset-legend">Client ID</legend>
+                <input
+                  type="text"
+                  id="mqttClientId"
+                  value={mqttClientId()}
+                  onInput={(e) => setMqttClientId(e.target.value)}
+                  placeholder="Unique client identifier"
+                  class="input"
+                />
+                <p class="label">Must be unique on the MQTT broker</p>
+              </fieldset>
+
+              <fieldset class="fieldset">
+                <legend class="fieldset-legend">Topic Prefix</legend>
+                <input
+                  type="text"
+                  id="mqttTopicPrefix"
+                  value={mqttTopicPrefix()}
+                  onInput={(e) => setMqttTopicPrefix(e.target.value)}
+                  placeholder="cc_sfs"
+                  class="input"
+                />
+                <p class="label">Prefix for all MQTT topics published by this device</p>
+              </fieldset>
+            </>
+          )}
 
           <button
             class="btn btn-accent btn-soft mt-10"
